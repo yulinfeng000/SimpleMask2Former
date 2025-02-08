@@ -1,1 +1,1 @@
-from .msdefomattn_pixel_decoder import MSDeformAttnPixelDecoder #noqa
+from .msdeformattn_pixel_decoder import MSDeformAttnPixelDecoder #noqa

@@ -74,47 +74,6 @@ class PositionEmbeddingSine(nn.Module):
         lines = [head] + [" " * _repr_indent + line for line in body]
         return "\n".join(lines)
 
-
-class Mlp(nn.Module):
-    """MLP as used in Vision Transformer, MLP-Mixer and related networks"""
-
-    def __init__(
-        self,
-        in_features,
-        hidden_features=None,
-        out_features=None,
-        act_layer=nn.GELU,
-        norm_layer=None,
-        bias=True,
-        drop=0.0,
-        use_conv=False,
-    ):
-        super().__init__()
-        out_features = out_features or in_features
-        hidden_features = hidden_features or in_features
-        bias = to_2tuple(bias)
-        drop_probs = to_2tuple(drop)
-        linear_layer = partial(nn.Conv2d, kernel_size=1) if use_conv else nn.Linear
-
-        self.fc1 = linear_layer(in_features, hidden_features, bias=bias[0])
-        self.act = create_act_layer(act_layer)
-        self.drop1 = nn.Dropout(drop_probs[0])
-        self.norm = (
-            norm_layer(hidden_features) if norm_layer is not None else nn.Identity()
-        )
-        self.fc2 = linear_layer(hidden_features, out_features, bias=bias[1])
-        self.drop2 = nn.Dropout(drop_probs[1])
-
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
-        x = self.drop1(x)
-        x = self.norm(x)
-        x = self.fc2(x)
-        x = self.drop2(x)
-        return x
-
-
 class MSDeformAttnTransformerEncoderLayer(nn.Module):
     def __init__(
         self,
@@ -136,12 +95,25 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
         )
         self.dropout = nn.Dropout(dropout)
         self.norm = create_norm_layer(norm_layer, embed_dim)
-        self.mlp = Mlp(embed_dim, ffn_dim, embed_dim, act_layer=act_layer)
+
+                # ffn
+        self.fc1 = nn.Linear(embed_dim, ffn_dim)
+        self.activation = create_act_layer(act_layer)
+        self.dropout2 = nn.Dropout(dropout)
+        self.fc2 = nn.Linear(ffn_dim, embed_dim)
+        self.dropout3 = nn.Dropout(dropout)
+        self.norm2 = nn.LayerNorm(embed_dim)
 
     @staticmethod
     def with_pos_embed(tensor, pos):
         return tensor if pos is None else tensor + pos
-
+    
+    def forward_ffn(self, src):
+        src2 = self.fc2(self.dropout2(self.activation(self.fc1(src))))
+        src = src + self.dropout3(src2)
+        src = self.norm2(src)
+        return src
+    
     def forward(
         self,
         src,
@@ -152,23 +124,38 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
         padding_mask=None,
     ):
         # self attention
+        print("before src shape is",src.shape)
         print("before src is", src)
         src2 = self.self_attn(
-            query=self.with_pos_embed(src, pos),
-            reference_points=reference_points,
-            input_flatten=src,
-            input_spatial_shapes=spatial_shapes,
-            input_level_start_index=level_start_index,
-            input_padding_mask=padding_mask,
+            self.with_pos_embed(src, pos),
+            reference_points,
+            src,
+            spatial_shapes,
+            level_start_index,
+            padding_mask,
         )
         print("src2 shape", src2.shape)
-        print("after src is", src)
+        print("after src2 is", src2)
         src = src + self.dropout(src2)
-        logger.debug(
-            f"[MSDeformAttnTransformerEncoderLayer::forward] before norm src shape is {src.shape}"
+        print(
+            "[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src
         )
         src = self.norm(src)
-        src = self.mlp(src)
+        print(
+            "[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src
+        )
+        src = self.forward_ffn(src) 
+        print(
+            "[MSDeformAttnTransformerEncoderLayer::forward] after mlp src is",src
+        )
+
+        if self.training:
+            if torch.isinf(src).any() or torch.isnan(src).any():
+                
+                clamp_value = torch.finfo(src.dtype).max - 1000
+                print(clamp_value)
+                src = torch.clamp(src, min=-clamp_value, max=clamp_value)
+        
         return src
 
 
@@ -182,23 +169,37 @@ class MSDeformAttnTransformerEncoder(nn.Module):
         self.num_layers = num_layers
 
     @staticmethod
-    def get_reference_points(spatial_shapes, valid_ratios, device):
-        reference_points_list = []
-        for lvl, (H_, W_) in enumerate(spatial_shapes):
+    def get_reference_points(spatial_shapes_list, valid_ratios, device):
+        """
+        Get reference points for each feature map. Used in decoder.
 
+        Args:
+            spatial_shapes_list (`list` of `tuple`):
+                Spatial shapes of the backbone feature maps as a list of tuples.
+            valid_ratios (`torch.FloatTensor`):
+                Valid ratios of each feature map, has shape of `(batch_size, num_feature_levels, 2)`.
+            device (`torch.device`):
+                Device on which to create the tensors.
+        Returns:
+            `torch.FloatTensor` of shape `(batch_size, num_queries, num_feature_levels, 2)`
+        """
+        reference_points_list = []
+        for lvl, (height, width) in enumerate(spatial_shapes_list):
             ref_y, ref_x = torch.meshgrid(
-                torch.linspace(0.5, H_ - 0.5, H_, dtype=torch.float32, device=device),
-                torch.linspace(0.5, W_ - 0.5, W_, dtype=torch.float32, device=device),
+                torch.linspace(0.5, height - 0.5, height, dtype=valid_ratios.dtype, device=device),
+                torch.linspace(0.5, width - 0.5, width, dtype=valid_ratios.dtype, device=device),
+                indexing="ij",
             )
-            ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * H_)
-            ref_x = ref_x.reshape(-1)[None] / (valid_ratios[:, None, lvl, 0] * W_)
+            ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * height)
+            ref_x = ref_x.reshape(-1)[None] / (valid_ratios[:, None, lvl, 0] * width)
             ref = torch.stack((ref_x, ref_y), -1)
             reference_points_list.append(ref)
+
         reference_points = torch.cat(reference_points_list, 1)
-        print("reference points shape", reference_points[:, :, None].shape)
-        print("valid ratios shape", valid_ratios[:, None].shape)
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
+
         return reference_points
+    
 
     def forward(
         self,
@@ -213,7 +214,10 @@ class MSDeformAttnTransformerEncoder(nn.Module):
         reference_points = self.get_reference_points(
             spatial_shapes, valid_ratios, device=src.device
         )
-        for _, layer in enumerate(self.layers):
+        for i, layer in enumerate(self.layers):
+            print(
+                f"layer {i} start>>>>>>>>>>>>"
+            )
             output = layer(
                 output,
                 pos,
@@ -222,7 +226,9 @@ class MSDeformAttnTransformerEncoder(nn.Module):
                 level_start_index,
                 padding_mask,
             )
-
+            print(
+                f"layer {i} end<<<<<<<<<<<<"
+            )
         return output
 
 
@@ -254,13 +260,14 @@ class MSDeformAttnTransformer(nn.Module):
         )
         self.level_embed = nn.Parameter(torch.Tensor(num_levels, embed_dim))
 
-    def get_valid_ratio(self, mask):
-        _, H, W = mask.shape
-        valid_H = torch.sum(~mask[:, :, 0], 1)
-        valid_W = torch.sum(~mask[:, 0, :], 1)
-        valid_ratio_h = valid_H.float() / H
-        valid_ratio_w = valid_W.float() / W
-        valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
+    def get_valid_ratio(self, mask, dtype=torch.float32):
+        """Get the valid ratio of all feature maps."""
+        _, height, width = mask.shape
+        valid_height = torch.sum(~mask[:, :, 0], 1)
+        valid_width = torch.sum(~mask[:, 0, :], 1)
+        valid_ratio_heigth = valid_height.to(dtype) / height
+        valid_ratio_width = valid_width.to(dtype) / width
+        valid_ratio = torch.stack([valid_ratio_width, valid_ratio_heigth], -1)
         return valid_ratio
 
     def forward(self, srcs, pos_embeds):
@@ -296,7 +303,7 @@ class MSDeformAttnTransformer(nn.Module):
         level_start_index = torch.cat(
             (spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1])
         )
-        valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
+        valid_ratios = torch.stack([self.get_valid_ratio(m,dtype=src_flatten.dtype) for m in masks], 1)
 
         memory = self.encoder(
             src_flatten,
@@ -373,10 +380,10 @@ class MSDeformAttnPixelDecoder(nn.Module):
             self.output_convs.append(output_conv)
 
     def forward(self, features):
-        for f in features:
-            print("f shape", f.shape)
+        features = features[:self.num_ins]
         srcs = []
         pos = []
+
         # 从小到大计算
         for i, f in enumerate(features[::-1]):
             x = f.float()
@@ -410,8 +417,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
             )
 
         for i, f in enumerate(features[::-1]):
-            x = f
-            cur_feat = self.lateral_convs[i](x)
+            cur_feat = self.lateral_convs[i](f)
             y = cur_feat + F.interpolate(
                 outs[-1], size=cur_feat.shape[-2:], mode="nearest"
             )

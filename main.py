@@ -19,7 +19,7 @@ logger.addHandler(logging.StreamHandler(sys.stdout))
 logger.setLevel("INFO")
 
 if __name__ == "__main__":
-    num_classes = 100
+    num_classes = 1
     mask2former = (
         Mask2Former(
             backbone=VisionTransformer(
@@ -52,16 +52,17 @@ if __name__ == "__main__":
     dataloader = build_dataloader(
         [
             dict(
-                img_root="/shared/data/chromo_coco/cropped_datasets/20250102crop-segm-coco/train",
-                ann_file="/shared/data/chromo_coco/cropped_datasets/20250102crop-segm-coco/annotations/chromosome_train.json",
+                img_root="/shared/data/chromo_coco/cropped_datasets/1kcrop-segm-coco/train",
+                ann_file="/shared/data/chromo_coco/cropped_datasets/1kcrop-segm-coco/annotations/chromosome_train.json",
             )
-        ]
+        ],
+        batch_size=2
     )
 
     criterion = SetCriterion(
         num_classes,
-        HungarianMatcher(num_points=224*224),
-        num_points=224*224
+        HungarianMatcher(num_points=112*112),
+        num_points=112*112
     ).cuda()
 
     optimizer = AdamW(mask2former.parameters(), lr=1e-3)
@@ -71,15 +72,20 @@ if __name__ == "__main__":
         optimizer.zero_grad()
         images, targets = batch
         images = images.cuda()
+        print("input image shape", images.shape)
         gt_classes = [t["labels"].cuda() for t in targets]
         gt_masks = [t["masks"].cuda() for t in targets]
+
+        for gt_cls in gt_classes:
+            print("gt cls shape", gt_cls.shape)
+        
+        for gt_msk in gt_masks:
+            print("gt msk shape", gt_msk.shape)
         pred_logits, pred_masks = mask2former(images)
         loss = criterion(pred_logits, pred_masks, gt_classes, gt_masks)
-        
         total_loss = sum(loss.values())
         print("loss",total_loss)
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(mask2former.parameters(), 1.0)
         optimizer.step()
-        # lr_scheduler.step()
+        lr_scheduler.step()
         

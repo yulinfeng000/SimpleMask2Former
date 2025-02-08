@@ -8,6 +8,7 @@ from cocoapi import ChromoConcatCOCO
 class CoCoDataset(Dataset):
     COCOAPI = ChromoConcatCOCO
 
+
     def __init__(self, datasets, transforms:"TransformPipeline"=None):
         self.cocoapi = self.COCOAPI(datasets)
         self.ids = list(sorted(self.cocoapi.imgs.keys()))
@@ -73,8 +74,6 @@ val_augmentation = A.Compose(
     bbox_params=A.BboxParams(format="coco", label_fields=["labels"]),
 )
     
-
-
 class TransformPipeline:
     def __init__(self, augmentation):
         self.augmentation:A.Compose = augmentation
