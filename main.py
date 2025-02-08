@@ -52,8 +52,8 @@ if __name__ == "__main__":
     dataloader = build_dataloader(
         [
             dict(
-                img_root="/shared/data/chromo_coco/cropped_datasets/1kcrop-segm-coco/train",
-                ann_file="/shared/data/chromo_coco/cropped_datasets/1kcrop-segm-coco/annotations/chromosome_train.json",
+                img_root="/shared/data/chromo_coco/cropped_datasets/20250102crop-segm-coco/train",
+                ann_file="/shared/data/chromo_coco/cropped_datasets/20250102crop-segm-coco/annotations/chromosome_train.json",
             )
         ]
     )

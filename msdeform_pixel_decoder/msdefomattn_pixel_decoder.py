@@ -3,11 +3,12 @@ import copy
 from functools import partial
 import sys
 import logging
+import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm.layers import create_norm_layer, create_act_layer, to_2tuple
-from .ops.modules import MSDeformAttn
+from .ms_deform_attn import MSDeformAttn
 
 
 logger = logging.getLogger(__file__)
@@ -127,7 +128,12 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
         num_points=4,
     ):
         super().__init__()
-        self.self_attn = MSDeformAttn(embed_dim, num_levels, num_heads, num_points)
+        self.self_attn = MSDeformAttn(
+            d_model=embed_dim,
+            n_levels=num_levels,
+            n_heads=num_heads,
+            n_points=num_points,
+        )
         self.dropout = nn.Dropout(dropout)
         self.norm = create_norm_layer(norm_layer, embed_dim)
         self.mlp = Mlp(embed_dim, ffn_dim, embed_dim, act_layer=act_layer)
@@ -146,18 +152,21 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
         padding_mask=None,
     ):
         # self attention
-        print("before src is",src)
+        print("before src is", src)
         src2 = self.self_attn(
-            self.with_pos_embed(src, pos),
-            reference_points,
-            src,
-            spatial_shapes,
-            level_start_index,
-            padding_mask,
+            query=self.with_pos_embed(src, pos),
+            reference_points=reference_points,
+            input_flatten=src,
+            input_spatial_shapes=spatial_shapes,
+            input_level_start_index=level_start_index,
+            input_padding_mask=padding_mask,
         )
-        print("after src is",src)
+        print("src2 shape", src2.shape)
+        print("after src is", src)
         src = src + self.dropout(src2)
-        logger.debug(f"[MSDeformAttnTransformerEncoderLayer::forward] before norm src shape is {src.shape}")
+        logger.debug(
+            f"[MSDeformAttnTransformerEncoderLayer::forward] before norm src shape is {src.shape}"
+        )
         src = self.norm(src)
         src = self.mlp(src)
         return src
@@ -186,16 +195,33 @@ class MSDeformAttnTransformerEncoder(nn.Module):
             ref = torch.stack((ref_x, ref_y), -1)
             reference_points_list.append(ref)
         reference_points = torch.cat(reference_points_list, 1)
-        print("reference points shape",reference_points[:, :, None] .shape)
-        print("valid ratios shape",  valid_ratios[:, None].shape)
+        print("reference points shape", reference_points[:, :, None].shape)
+        print("valid ratios shape", valid_ratios[:, None].shape)
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
         return reference_points
 
-    def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
+    def forward(
+        self,
+        src,
+        spatial_shapes,
+        level_start_index,
+        valid_ratios,
+        pos=None,
+        padding_mask=None,
+    ):
         output = src
-        reference_points = self.get_reference_points(spatial_shapes, valid_ratios, device=src.device)
+        reference_points = self.get_reference_points(
+            spatial_shapes, valid_ratios, device=src.device
+        )
         for _, layer in enumerate(self.layers):
-            output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
+            output = layer(
+                output,
+                pos,
+                reference_points,
+                spatial_shapes,
+                level_start_index,
+                padding_mask,
+            )
 
         return output
 
@@ -217,7 +243,12 @@ class MSDeformAttnTransformer(nn.Module):
         self.num_heads = num_heads
         self.encoder = MSDeformAttnTransformerEncoder(
             MSDeformAttnTransformerEncoderLayer(
-                embed_dim, num_heads, ffn_dim, dropout, act_layer=act_layer
+                embed_dim,
+                num_heads,
+                ffn_dim,
+                dropout,
+                act_layer=act_layer,
+                num_points=num_points,
             ),
             num_layers=num_layers,
         )
@@ -265,7 +296,7 @@ class MSDeformAttnTransformer(nn.Module):
         level_start_index = torch.cat(
             (spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1])
         )
-        valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks],1)
+        valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
 
         memory = self.encoder(
             src_flatten,
@@ -287,7 +318,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         embed_dim,
         mask_dim,
         num_outs=3,
-        transformer_dropout=0.,
+        transformer_dropout=0.0,
         transformer_num_heads=4,
         transformer_ffn_dim=1024,
         transformer_num_layers=3,
@@ -329,19 +360,18 @@ class MSDeformAttnPixelDecoder(nn.Module):
         for in_chans in in_channels[::-1]:
             lateral_conv = nn.Sequential(
                 nn.Conv2d(in_chans, embed_dim, kernel_size=1),
-                create_norm_layer(norm_layer,embed_dim),
+                create_norm_layer(norm_layer, embed_dim),
                 create_act_layer(act_layer),
             )
 
             output_conv = nn.Sequential(
                 nn.Conv2d(embed_dim, embed_dim, kernel_size=3, stride=1, padding=1),
-                create_norm_layer(norm_layer,embed_dim),
+                create_norm_layer(norm_layer, embed_dim),
                 create_act_layer(act_layer),
             )
             self.lateral_convs.append(lateral_conv)
             self.output_convs.append(output_conv)
 
-    @torch.autocast(device_type='cuda',enabled=False)
     def forward(self, features):
         for f in features:
             print("f shape", f.shape)
@@ -361,7 +391,9 @@ class MSDeformAttnPixelDecoder(nn.Module):
         split_size_or_sections = [None] * self.num_ins
         for i in range(self.num_ins):
             if i < self.num_ins - 1:
-                split_size_or_sections[i] = level_start_index[i + 1] - level_start_index[i]
+                split_size_or_sections[i] = (
+                    level_start_index[i + 1] - level_start_index[i]
+                )
             else:
                 split_size_or_sections[i] = y.shape[1] - level_start_index[i]
         y = torch.split(y, split_size_or_sections, dim=1)
@@ -371,12 +403,18 @@ class MSDeformAttnPixelDecoder(nn.Module):
         num_cur_levels = 0
 
         for i, z in enumerate(y):
-            outs.append(z.transpose(1, 2).view(bs, -1, spatial_shapes[i][0], spatial_shapes[i][1]))
+            outs.append(
+                z.transpose(1, 2).view(
+                    bs, -1, spatial_shapes[i][0], spatial_shapes[i][1]
+                )
+            )
 
-        for i,f in enumerate(features[::-1]):
+        for i, f in enumerate(features[::-1]):
             x = f
             cur_feat = self.lateral_convs[i](x)
-            y = cur_feat + F.interpolate(outs[-1], size=cur_feat.shape[-2:], mode="nearest")
+            y = cur_feat + F.interpolate(
+                outs[-1], size=cur_feat.shape[-2:], mode="nearest"
+            )
             y = self.output_convs[i](y)
             outs.append(y)
 
