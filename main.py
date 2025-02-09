@@ -24,11 +24,11 @@ if __name__ == "__main__":
         Mask2Former(
             backbone=VisionTransformer(
                 patch_size=16,
-                embed_dim=768,
+                embed_dim=256,
                 depth=1,  # 12
-                num_heads=12,
+                num_heads=4,
                 global_attn_indexes=[2, 5, 8, 11],
-                window_size=14,
+                window_size=7,
                 use_rel_pos=True,
                 img_size=1024,
             ),
@@ -67,25 +67,30 @@ if __name__ == "__main__":
 
     optimizer = AdamW(mask2former.parameters(), lr=1e-3)
     lr_scheduler = StepLR(optimizer, step_size=100)
+    scaler = torch.amp.GradScaler() 
+ 
+    with torch.autocast('cuda'):
+        for i, batch in enumerate(dataloader):
+            optimizer.zero_grad()
+            images, targets = batch
+            images = images.cuda()
+            print("input image shape", images.shape)
+            gt_classes = [t["labels"].cuda() for t in targets]
+            gt_masks = [t["masks"].cuda() for t in targets]
 
-    for i, batch in enumerate(dataloader):
-        optimizer.zero_grad()
-        images, targets = batch
-        images = images.cuda()
-        print("input image shape", images.shape)
-        gt_classes = [t["labels"].cuda() for t in targets]
-        gt_masks = [t["masks"].cuda() for t in targets]
+            for gt_cls in gt_classes:
+                print("gt cls shape", gt_cls.shape)
+            
+            for gt_msk in gt_masks:
+                print("gt msk shape", gt_msk.shape)
 
-        for gt_cls in gt_classes:
-            print("gt cls shape", gt_cls.shape)
-        
-        for gt_msk in gt_masks:
-            print("gt msk shape", gt_msk.shape)
-        pred_logits, pred_masks = mask2former(images)
-        loss = criterion(pred_logits, pred_masks, gt_classes, gt_masks)
-        total_loss = sum(loss.values())
-        print("loss",total_loss)
-        total_loss.backward()
-        optimizer.step()
-        lr_scheduler.step()
-        
+            pred_logits, pred_masks = mask2former(images)
+
+            loss = criterion(pred_logits, pred_masks, gt_classes, gt_masks)
+            total_loss = sum(loss.values())
+            print("loss :",total_loss)
+            scaler.scale(total_loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            lr_scheduler.step()
+    

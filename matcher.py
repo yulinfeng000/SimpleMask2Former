@@ -8,30 +8,34 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 
-def point_sample(input, point_coords, **kwargs):
+def point_sample(x, point_coords, **kwargs):
     """
-    A wrapper around :function:`torch.nn.functional.grid_sample` to support 3D point_coords tensors.
-    Unlike :function:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside
-    [0, 1] x [0, 1] square.
+    A wrapper around `torch.nn.functional.grid_sample` to support 3D point_coordinates tensors.
 
     Args:
-        input (Tensor): A tensor of shape (N, C, H, W) that contains features map on a H x W grid.
-        point_coords (Tensor): A tensor of shape (N, P, 2) or (N, Hgrid, Wgrid, 2) that contains
-        [0, 1] x [0, 1] normalized point coordinates.
+        input_features (`torch.Tensor` of shape (batch_size, channels, height, width)):
+            A tensor that contains features map on a height * width grid
+        point_coordinates (`torch.Tensor` of shape (batch_size, num_points, 2) or (batch_size, grid_height, grid_width,:
+        2)):
+            A tensor that contains [0, 1] * [0, 1] normalized point coordinates
+        add_dim (`bool`):
+            boolean value to keep track of added dimension
 
     Returns:
-        output (Tensor): A tensor of shape (N, C, P) or (N, C, Hgrid, Wgrid) that contains
-            features for points in `point_coords`. The features are obtained via bilinear
-            interplation from `input` the same way as :function:`torch.nn.functional.grid_sample`.
+        point_features (`torch.Tensor` of shape (batch_size, channels, num_points) or (batch_size, channels,
+        height_grid, width_grid):
+            A tensor that contains features for points in `point_coordinates`.
     """
-    add_dim = False
     if point_coords.dim() == 3:
         add_dim = True
         point_coords = point_coords.unsqueeze(2)
-    output = F.grid_sample(input, 2.0 * point_coords - 1.0, **kwargs)
+
+    # use nn.function.grid_sample to get features for points in `point_coordinates` via bilinear interpolation
+    point_features = torch.nn.functional.grid_sample(x, 2.0 * point_coords - 1.0, **kwargs)
     if add_dim:
-        output = output.squeeze(3)
-    return output
+        point_features = point_features.squeeze(3)
+
+    return point_features
 
 def batch_dice_loss(inputs: torch.Tensor, targets: torch.Tensor):
     """
@@ -96,7 +100,7 @@ class HungarianMatcher(nn.Module):
     while the others are un-matched (and thus treated as non-objects).
     """
 
-    def __init__(self, cost_class: float = 1, cost_mask: float = 1, cost_dice: float = 1, num_points: int = 0):
+    def __init__(self, cost_class: float = 1.0, cost_mask: float = 1.0, cost_dice: float = 1.0, num_points: int = 0):
         """Creates the matcher
 
         Params:
@@ -168,6 +172,10 @@ class HungarianMatcher(nn.Module):
                 + self.cost_dice * cost_dice
             )
             C = C.reshape(num_queries, -1).cpu()
+
+            C = torch.minimum(C, torch.tensor(1e10))
+            C = torch.maximum(C, torch.tensor(-1e10))
+            C = torch.nan_to_num(C, 0)
 
             indices.append(linear_sum_assignment(C))
 
