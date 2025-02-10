@@ -75,7 +75,7 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
         embed_dim=256,
         num_heads=8,
         ffn_dim=1024,
-        dropout=0.1,
+        dropout=0.0,
         norm_layer="layernorm",
         act_layer="relu",
         num_levels=4,
@@ -119,7 +119,7 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
     ):
         # self attention
         # print("before src shape is",src.shape)
-        # print("before src is", src)
+        print("before src is", src)
         src2 = self.self_attn(
             self.with_pos_embed(src, pos),
             reference_points,
@@ -129,7 +129,7 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
             padding_mask,
         )
         # print("src2 shape", src2.shape)
-        # print("after src2 is", src2)
+        print("after src2 is", src2)
         src = src + self.dropout(src2)
         # print("[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src)
         src = self.norm(src)

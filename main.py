@@ -6,6 +6,7 @@ from torch.optim.lr_scheduler import StepLR
 from model import (
     Mask2Former,
     VisionTransformer,
+    ResNet,
     SimpleFPN,
     MSDeformAttnPixelDecoder,
     TransformerDecoder,
@@ -23,19 +24,20 @@ if __name__ == "__main__":
     num_classes = 1
     mask2former = (
         Mask2Former(
-            backbone=VisionTransformer(
-                patch_size=16,
-                embed_dim=256,
-                depth=1,  # 12
-                num_heads=4,
-                global_attn_indexes=[2, 5, 8, 11],
-                window_size=7,
-                use_rel_pos=True,
-                img_size=1024,
-            ),
+            # backbone=VisionTransformer(
+            #     patch_size=16,
+            #     embed_dim=256,
+            #     depth=1,  # 12
+            #     num_heads=4,
+            #     global_attn_indexes=[2, 5, 8, 11],
+            #     window_size=7,
+            #     use_rel_pos=True,
+            #     img_size=1024,
+            # ),
+            backbone=ResNet((3, 4, 6, 3)),
             neck=SimpleFPN(
-                backbone_channel=256,
-                in_channels=[64, 128, 256, 256],
+                backbone_channel=2048,
+                in_channels=[512, 1024, 2048, 2048],
                 out_channels=256,
                 num_outs=4,
                 norm_layer="layernorm2d",
@@ -52,18 +54,17 @@ if __name__ == "__main__":
         ChromoConcatCOCO(
             [
             dict(
-                img_root="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/train",
-                ann_file="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/annotations/chromosome_train.json",
+                img_root="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/train",
+                ann_file="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/annotations/chromosome_train.json",
             )
         ]),
         batch_size=2
     )
 
-
     val_coco = ChromoConcatCOCO([
        dict(
-                img_root="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/val",
-                ann_file="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/annotations/chromosome_val.json",
+                img_root="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/val",
+                ann_file="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/annotations/chromosome_val.json",
             ) 
     ])
 
@@ -77,24 +78,26 @@ if __name__ == "__main__":
     # lr_scheduler = StepLR(optimizer, step_size=100)
     scaler = torch.amp.GradScaler() 
     num_steps = len(train_dataloader)
-    with torch.autocast('cuda'):
-        for i, batch in enumerate(train_dataloader):
-            optimizer.zero_grad()
-            images, targets = batch
-            images = images.cuda()
-            gt_classes = [t["labels"].cuda() for t in targets]
-            gt_masks = [t["masks"].cuda() for t in targets]
-            metainfos = [t['metainfo'] for t in targets]
-            pred_logits, pred_masks = mask2former(images)
-            loss = criterion(pred_logits, pred_masks, gt_classes, gt_masks)
-            total_loss = sum(loss.values())
-            logger.info(f"[epoch 0] step:{i}/{num_steps}, loss dice: {loss['loss_dice']}, loss mask:{loss['loss_mask']}, loss cls:{loss['loss_ce']}, total loss:{total_loss}")
-            scaler.scale(total_loss).backward()
-            torch.nn.utils.clip_grad_norm_(mask2former.parameters(), 1.0)
-            scaler.unscale_(optimizer)
-            scaler.step(optimizer)
-            scaler.update()
-            # lr_scheduler.step()
+    # with torch.autocast('cuda'):
+    for i, batch in enumerate(train_dataloader):
+        optimizer.zero_grad()
+        images, targets = batch
+        images = images.cuda()
+        gt_classes = [t["labels"].cuda() for t in targets]
+        gt_masks = [t["masks"].cuda() for t in targets]
+        metainfos = [t['metainfo'] for t in targets]
+        pred_logits, pred_masks = mask2former(images)
+        loss = criterion(pred_logits, pred_masks, gt_classes, gt_masks)
+        total_loss = sum(loss.values())
+        logger.info(f"[epoch 0] step:{i}/{num_steps}, loss dice: {loss['loss_dice']}, loss mask:{loss['loss_mask']}, loss cls:{loss['loss_ce']}, total loss:{total_loss}")
+        # scaler.scale(total_loss).backward()
+        # torch.nn.utils.clip_grad_norm_(mask2former.parameters(), 1.0)
+        # scaler.unscale_(optimizer)
+        # scaler.step(optimizer)
+        # scaler.update()
+        total_loss.backward()
+        optimizer.step()
+        # lr_scheduler.step()
 
     eval_results = coco_evaluate(mask2former,val_coco)
     print(eval_results)
