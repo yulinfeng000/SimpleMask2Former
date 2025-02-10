@@ -100,13 +100,13 @@ def convert_pred_results_to_coco_format(pred_masks, pred_classes, pred_scores, m
     return annotations
     
 
-def coco_evaluate(model,cocoGt:COCO):
+def coco_evaluate(model,cocoGt:COCO, device):
     evaluator = MeanAveragePrecision(iou_type="segm",backend="faster_coco_eval")
     dataloader = build_val_dataloader(cocoGt, batch_size=3)
     model.eval()
     for i ,batch in enumerate(tqdm(dataloader)):
         images, targets = batch
-        images = images.cuda()
+        images = images.to(device)
         metainfos = [t['metainfo'] for t in targets]
 
         with torch.no_grad():

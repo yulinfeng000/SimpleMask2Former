@@ -7,6 +7,7 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
 from timm.layers import create_norm_layer, create_act_layer, to_2tuple
 from .ms_deform_attn import MSDeformAttn
 
@@ -33,10 +34,12 @@ class PositionEmbeddingSine(nn.Module):
             raise ValueError("normalize should be True if scale is passed")
 
         self.scale = 2 * math.pi if scale is None else scale
-    
-    def forward(self, x, mask = None):
+
+    def forward(self, x, mask=None):
         if mask is None:
-            mask = torch.zeros((x.size(0), x.size(2), x.size(3)), device=x.device, dtype=torch.bool)
+            mask = torch.zeros(
+                (x.size(0), x.size(2), x.size(3)), device=x.device, dtype=torch.bool
+            )
         not_mask = (~mask).to(x.dtype)
         y_embed = not_mask.cumsum(1)
         x_embed = not_mask.cumsum(2)
@@ -45,16 +48,23 @@ class PositionEmbeddingSine(nn.Module):
             y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale
             x_embed = x_embed / (x_embed[:, :, -1:] + eps) * self.scale
 
-        dim_t = torch.arange(self.num_pos_feats, dtype=torch.int64, device=x.device).type_as(x)
-        dim_t = self.temperature ** (2 * torch.div(dim_t, 2, rounding_mode="floor") / self.num_pos_feats)
+        dim_t = torch.arange(
+            self.num_pos_feats, dtype=torch.int64, device=x.device
+        ).type_as(x)
+        dim_t = self.temperature ** (
+            2 * torch.div(dim_t, 2, rounding_mode="floor") / self.num_pos_feats
+        )
 
         pos_x = x_embed[:, :, :, None] / dim_t
         pos_y = y_embed[:, :, :, None] / dim_t
-        pos_x = torch.stack((pos_x[:, :, :, 0::2].sin(), pos_x[:, :, :, 1::2].cos()), dim=4).flatten(3)
-        pos_y = torch.stack((pos_y[:, :, :, 0::2].sin(), pos_y[:, :, :, 1::2].cos()), dim=4).flatten(3)
+        pos_x = torch.stack(
+            (pos_x[:, :, :, 0::2].sin(), pos_x[:, :, :, 1::2].cos()), dim=4
+        ).flatten(3)
+        pos_y = torch.stack(
+            (pos_y[:, :, :, 0::2].sin(), pos_y[:, :, :, 1::2].cos()), dim=4
+        ).flatten(3)
         pos = torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2)
         return pos
-    
 
     def __repr__(self, _repr_indent=4):
         head = "Positional encoding " + self.__class__.__name__
@@ -90,20 +100,24 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
         )
         self.dropout = nn.Dropout(dropout)
         self.norm = create_norm_layer(norm_layer, embed_dim)
-                # ffn
+        # ffn
         self.fc1 = nn.Linear(embed_dim, ffn_dim)
         self.activation = create_act_layer(act_layer)
         self.dropout2 = nn.Dropout(dropout)
         self.fc2 = nn.Linear(ffn_dim, embed_dim)
         self.dropout3 = nn.Dropout(dropout)
         self.norm2 = create_norm_layer(norm_layer, embed_dim)
-    
+
+    @staticmethod
+    def with_pos_embed(tensor, pos):
+        return tensor if pos is None else tensor + pos
+
     def forward_ffn(self, src):
         src2 = self.fc2(self.dropout2(self.activation(self.fc1(src))))
         src = src + self.dropout3(src2)
         src = self.norm2(src)
         return src
-    
+
     def forward(
         self,
         src,
@@ -115,32 +129,32 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
     ):
         # self attention
         # print("before src shape is",src.shape)
-        print("before src is", src)
+        # print("before src is", src)
+        # breakpoint()
+        query = self.with_pos_embed(src, pos)
         src2 = self.self_attn(
-            query=src,
-            position_embeddings=pos,
+            query=query,
             reference_points=reference_points,
-            value=src,
-            spatial_shapes=spatial_shapes,
-            level_start_index=level_start_index,
-            padding_mask=padding_mask,
+            input_flatten=src,
+            input_spatial_shapes=spatial_shapes,
+            input_level_start_index=level_start_index,
+            input_padding_mask=padding_mask,
         )
         # print("src2 shape", src2.shape)
-        print("after src2 is", src2)
+        # print("after src2 is", src2)
         src = src + self.dropout(src2)
         # print("[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src)
         src = self.norm(src)
         # print("[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src)
         src = self.forward_ffn(src)
         # print("[MSDeformAttnTransformerEncoderLayer::forward] after mlp src is",src)
-        
 
         if self.training:
             if torch.isinf(src).any() or torch.isnan(src).any():
                 clamp_value = torch.finfo(src.dtype).max - 1000
                 # print(clamp_value)
                 src = torch.clamp(src, min=-clamp_value, max=clamp_value)
-        
+
         return src
 
 
@@ -164,6 +178,7 @@ class MSDeformAttnTransformerEncoder(nn.Module):
             valid_ratios (`torch.FloatTensor`):
                 Valid ratios of each feature map, has shape of `(batch_size, num_feature_levels, 2)`.
             device (`torch.device`):
+
                 Device on which to create the tensors.
         Returns:
             `torch.FloatTensor` of shape `(batch_size, num_queries, num_feature_levels, 2)`
@@ -171,8 +186,12 @@ class MSDeformAttnTransformerEncoder(nn.Module):
         reference_points_list = []
         for lvl, (height, width) in enumerate(spatial_shapes_list):
             ref_y, ref_x = torch.meshgrid(
-                torch.linspace(0.5, height - 0.5, height, dtype=valid_ratios.dtype, device=device),
-                torch.linspace(0.5, width - 0.5, width, dtype=valid_ratios.dtype, device=device),
+                torch.linspace(
+                    0.5, height - 0.5, height, dtype=valid_ratios.dtype, device=device
+                ),
+                torch.linspace(
+                    0.5, width - 0.5, width, dtype=valid_ratios.dtype, device=device
+                ),
                 indexing="ij",
             )
             ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * height)
@@ -184,7 +203,6 @@ class MSDeformAttnTransformerEncoder(nn.Module):
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
 
         return reference_points
-    
 
     def forward(
         self,
@@ -200,7 +218,7 @@ class MSDeformAttnTransformerEncoder(nn.Module):
             spatial_shapes, valid_ratios, device=src.device
         )
         for i, layer in enumerate(self.layers):
-            print(f"layer {i} start>>>>>>>>>>>>")
+            # print(f"layer {i} start>>>>>>>>>>>>")
             output = layer(
                 src=output,
                 pos=pos,
@@ -239,6 +257,17 @@ class MSDeformAttnTransformer(nn.Module):
             num_layers=num_layers,
         )
         self.level_embed = nn.Parameter(torch.Tensor(num_levels, embed_dim))
+
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+        for m in self.modules():
+            if isinstance(m, MSDeformAttn):
+                m._reset_parameters()
+        normal_(self.level_embed)
 
     def get_valid_ratio(self, mask, dtype=torch.float32):
         """Get the valid ratio of all feature maps."""
@@ -283,15 +312,17 @@ class MSDeformAttnTransformer(nn.Module):
         level_start_index = torch.cat(
             (spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1])
         )
-        valid_ratios = torch.stack([self.get_valid_ratio(m,dtype=src_flatten.dtype) for m in masks], 1)
+        valid_ratios = torch.stack(
+            [self.get_valid_ratio(m, dtype=src_flatten.dtype) for m in masks], 1
+        )
 
         memory = self.encoder(
-            src_flatten,
-            spatial_shapes,
-            level_start_index,
-            valid_ratios,
-            lvl_pos_embed_flatten,
-            mask_flatten,
+            src=src_flatten,
+            spatial_shapes=spatial_shapes,
+            level_start_index=level_start_index,
+            valid_ratios=valid_ratios,
+            pos=lvl_pos_embed_flatten,
+            padding_mask=mask_flatten,
         )
 
         return memory, spatial_shapes, level_start_index
@@ -361,7 +392,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
             self.output_convs.append(output_conv)
 
     def forward(self, features):
-        features = features[:self.num_ins]
+        features = features[: self.num_ins]
         srcs = []
         pos = []
 

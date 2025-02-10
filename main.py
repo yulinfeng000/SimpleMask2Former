@@ -13,7 +13,8 @@ from model import (
 )
 from criterion import SetCriterion
 from matcher import HungarianMatcher
-from dataloader import build_train_dataloader,ChromoConcatCOCO
+from dataloader import build_train_dataloader
+from cocoapi import ChromoConcatCOCO
 from evaluator import coco_evaluate
 
 logger = logging.getLogger(__file__)
@@ -23,6 +24,8 @@ logger.setLevel("INFO")
 if __name__ == "__main__":
 
     num_classes = 1
+    device = "cuda:3"
+
     mask2former = (
         Mask2Former(
             # backbone=VisionTransformer(
@@ -47,7 +50,7 @@ if __name__ == "__main__":
             #pixel_decoder=MultiScalePixelDecoder([256, 256, 256, 256], 256, 256),
             transformer_decoder=TransformerDecoder(256, 256, num_classes=num_classes,num_queries=100),
         )
-        .cuda()
+        .to(device)
         .train()
     )
 
@@ -55,8 +58,8 @@ if __name__ == "__main__":
         ChromoConcatCOCO(
             [
             dict(
-                img_root="/shared/data/chromo_coco/cropped_datasets/1kcrop-segm-coco/train",
-                ann_file="/shared/data/chromo_coco/cropped_datasets/1kcrop-segm-coco/annotations/chromosome_train.json",
+                img_root="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/train",
+                ann_file="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/annotations/chromosome_train.json",
             )
         ]),
         batch_size=2
@@ -74,25 +77,31 @@ if __name__ == "__main__":
         num_classes,
         HungarianMatcher(num_points=112*112),
         num_points=112*112
-    ).cuda()
+    ).to(device)
 
     optimizer = AdamW(mask2former.parameters(), lr=1e-5)
+    scaler = torch.amp.GradScaler(device)
+
     num_steps = len(train_dataloader)
 
-    for i, batch in enumerate(train_dataloader):
-        optimizer.zero_grad()
-        images, targets = batch
-        images = images.cuda()
-        gt_classes = [t["labels"].cuda() for t in targets]
-        gt_masks = [t["masks"].cuda() for t in targets]
-        metainfos = [t['metainfo'] for t in targets]
-        pred_logits, pred_masks = mask2former(images)
-        loss = criterion(pred_logits, pred_masks, gt_classes, gt_masks)
-        total_loss = sum(loss.values())
-        logger.info(f"[epoch 0] step:{i}/{num_steps}, loss dice: {loss['loss_dice']}, loss mask:{loss['loss_mask']}, loss cls:{loss['loss_ce']}, total loss:{total_loss}")
-        total_loss.backward()
-        optimizer.step()
+    with torch.autocast(device):
+        for i, batch in enumerate(train_dataloader):
+            optimizer.zero_grad()
+            images, targets = batch
+            images = images.to(device)
+            gt_classes = [t["labels"].to(device) for t in targets]
+            gt_masks = [t["masks"].to(device) for t in targets]
+            metainfos = [t['metainfo'] for t in targets]
+            pred_logits, pred_masks = mask2former(images)
+            loss = criterion(pred_logits, pred_masks, gt_classes, gt_masks)
+            total_loss = sum(loss.values())
+            logger.info(f"[epoch 0] step:{i}/{num_steps}, loss dice: {loss['loss_dice']}, loss mask:{loss['loss_mask']}, loss cls:{loss['loss_ce']}, total loss:{total_loss}")
+            scaler.scale(total_loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
 
-    eval_results = coco_evaluate(mask2former,val_coco)
-    print(eval_results)
+    mask2former.eval()
+    with torch.no_grad():
+        eval_results = coco_evaluate(mask2former,val_coco, device)
+        print(eval_results)
