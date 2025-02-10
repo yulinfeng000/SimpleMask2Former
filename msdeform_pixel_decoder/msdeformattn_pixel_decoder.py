@@ -118,8 +118,8 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
         padding_mask=None,
     ):
         # self attention
-        print("before src shape is",src.shape)
-        print("before src is", src)
+        # print("before src shape is",src.shape)
+        # print("before src is", src)
         src2 = self.self_attn(
             self.with_pos_embed(src, pos),
             reference_points,
@@ -128,25 +128,20 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
             level_start_index,
             padding_mask,
         )
-        print("src2 shape", src2.shape)
-        print("after src2 is", src2)
+        # print("src2 shape", src2.shape)
+        # print("after src2 is", src2)
         src = src + self.dropout(src2)
-        print(
-            "[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src
-        )
+        # print("[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src)
         src = self.norm(src)
-        print(
-            "[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src
-        )
+        # print("[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src)
         src = self.forward_ffn(src) 
-        print(
-            "[MSDeformAttnTransformerEncoderLayer::forward] after mlp src is",src
-        )
+        # print("[MSDeformAttnTransformerEncoderLayer::forward] after mlp src is",src)
+        
 
         if self.training:
             if torch.isinf(src).any() or torch.isnan(src).any():
                 clamp_value = torch.finfo(src.dtype).max - 1000
-                print(clamp_value)
+                # print(clamp_value)
                 src = torch.clamp(src, min=-clamp_value, max=clamp_value)
         
         return src
@@ -208,9 +203,7 @@ class MSDeformAttnTransformerEncoder(nn.Module):
             spatial_shapes, valid_ratios, device=src.device
         )
         for i, layer in enumerate(self.layers):
-            print(
-                f"layer {i} start>>>>>>>>>>>>"
-            )
+            # print(f"layer {i} start>>>>>>>>>>>>")
             output = layer(
                 output,
                 pos,
@@ -219,9 +212,7 @@ class MSDeformAttnTransformerEncoder(nn.Module):
                 level_start_index,
                 padding_mask,
             )
-            print(
-                f"layer {i} end<<<<<<<<<<<<"
-            )
+            # print(f"layer {i} end<<<<<<<<<<<<")
         return output
 
 

@@ -1,8 +1,19 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
 import torchvision
-from matcher import HungarianMatcher,point_sample
+from matcher import point_sample
+
+
+
+
+def get_world_size() -> int:
+    if not dist.is_available():
+        return 1
+    if not dist.is_initialized():
+        return 1
+    return dist.get_world_size()
 
 def _max_by_axis(the_list):
     maxes = the_list[0]
@@ -274,9 +285,19 @@ class SetCriterion(nn.Module):
         loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
         losses = {"loss_ce": loss_ce}
         return losses
-    
+
+    def get_num_masks(self, class_labels: torch.Tensor, device: torch.device) -> torch.Tensor:
+        """
+        Computes the average number of target masks across the batch, for normalization purposes.
+        """
+        num_masks = sum([len(classes) for classes in class_labels])
+        num_masks = torch.as_tensor(num_masks, dtype=torch.float, device=device)
+        world_size = get_world_size()
+        num_masks = torch.clamp(num_masks / world_size, min=1)
+        return num_masks
+
     def forward(self, pred_logits, pred_masks, gt_classes, gt_masks):
-        num_masks = sum(len(t) for t in gt_classes)
+        num_masks = self.get_num_masks(gt_classes, device=gt_classes[0].device)
         indices = self.matcher(pred_logits, pred_masks, gt_classes, gt_masks)
         """
             indices is [
@@ -287,6 +308,7 @@ class SetCriterion(nn.Module):
             src and tgt type is Tensor
         """
         losses = {}
+
         losses.update(self.loss_masks(pred_masks, gt_masks, indices, num_masks))
         losses.update(self.loss_labels(pred_logits, gt_classes,indices, num_masks))
 

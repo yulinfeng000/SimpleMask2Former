@@ -47,13 +47,11 @@ if __name__ == "__main__":
         .train()
     )
 
-    torch.nn.utils.clip_grad_norm_(mask2former.parameters(), max_norm=1.0)
-
     dataloader = build_dataloader(
         [
             dict(
-                img_root="/shared/data/chromo_coco/cropped_datasets/1kcrop-segm-coco/train",
-                ann_file="/shared/data/chromo_coco/cropped_datasets/1kcrop-segm-coco/annotations/chromosome_train.json",
+                img_root="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/train",
+                ann_file="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/annotations/chromosome_train.json",
             )
         ],
         batch_size=2
@@ -65,24 +63,18 @@ if __name__ == "__main__":
         num_points=112*112
     ).cuda()
 
-    optimizer = AdamW(mask2former.parameters(), lr=1e-3)
+    optimizer = AdamW(mask2former.parameters(), lr=1e-5)
     lr_scheduler = StepLR(optimizer, step_size=100)
     scaler = torch.amp.GradScaler() 
- 
+    
     with torch.autocast('cuda'):
+
         for i, batch in enumerate(dataloader):
             optimizer.zero_grad()
             images, targets = batch
             images = images.cuda()
-            print("input image shape", images.shape)
             gt_classes = [t["labels"].cuda() for t in targets]
             gt_masks = [t["masks"].cuda() for t in targets]
-
-            for gt_cls in gt_classes:
-                print("gt cls shape", gt_cls.shape)
-            
-            for gt_msk in gt_masks:
-                print("gt msk shape", gt_msk.shape)
 
             pred_logits, pred_masks = mask2former(images)
 

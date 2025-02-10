@@ -126,9 +126,9 @@ class HungarianMatcher(nn.Module):
 
         # Iterate through batch size
         for b in range(bs):
-            print("pred_logits[b] shape is ", pred_logits[b].shape)
+            # print("pred_logits[b] shape is ", pred_logits[b].shape)
             out_prob = pred_logits[b].softmax(-1)  # [num_queries, num_classes]
-            print("after softmax pred_logits[b] shape is", out_prob.shape)
+            # print("after softmax pred_logits[b] shape is", out_prob.shape)
             tgt_ids = gt_classes[b]
 
             # Compute the classification cost. Contrary to the loss, we don't use the NLL,

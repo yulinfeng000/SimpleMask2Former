@@ -119,7 +119,7 @@ class SimpleFPN(nn.Module):
         Returns:
             tuple: Feature maps, each is a 4D-tensor.
         """
-        print("simple fpn input", x)
+        # print("simple fpn input", x)
         # build FPN
         inputs = []
         inputs.append(self.fpn1(x))
@@ -526,8 +526,6 @@ class Mask2Former(nn.Module):
     def forward(self, x):
         x = self.backbone(x)
         mlvl_features = self.neck(x)
-        for i, f in enumerate(mlvl_features):
-            print(f"lvl {i}", f.shape)
         x, memories = self.pixel_decoder(mlvl_features)
         pred_logits, pred_masks = self.transformer_decoder(x, memories)
         return pred_logits, pred_masks
