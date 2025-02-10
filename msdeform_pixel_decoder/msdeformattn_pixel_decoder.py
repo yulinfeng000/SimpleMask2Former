@@ -97,10 +97,6 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
         self.fc2 = nn.Linear(ffn_dim, embed_dim)
         self.dropout3 = nn.Dropout(dropout)
         self.norm2 = create_norm_layer(norm_layer, embed_dim)
-
-    @staticmethod
-    def with_pos_embed(tensor, pos):
-        return tensor if pos is None else tensor + pos
     
     def forward_ffn(self, src):
         src2 = self.fc2(self.dropout2(self.activation(self.fc1(src))))
@@ -119,22 +115,23 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
     ):
         # self attention
         # print("before src shape is",src.shape)
-        # print("before src is", src)
+        print("before src is", src)
         src2 = self.self_attn(
-            self.with_pos_embed(src, pos),
-            reference_points,
-            src,
-            spatial_shapes,
-            level_start_index,
-            padding_mask,
+            query=src,
+            position_embeddings=pos,
+            reference_points=reference_points,
+            value=src,
+            spatial_shapes=spatial_shapes,
+            level_start_index=level_start_index,
+            padding_mask=padding_mask,
         )
         # print("src2 shape", src2.shape)
-        # print("after src2 is", src2)
+        print("after src2 is", src2)
         src = src + self.dropout(src2)
         # print("[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src)
         src = self.norm(src)
         # print("[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src)
-        src = self.forward_ffn(src) 
+        src = self.forward_ffn(src)
         # print("[MSDeformAttnTransformerEncoderLayer::forward] after mlp src is",src)
         
 
@@ -203,16 +200,15 @@ class MSDeformAttnTransformerEncoder(nn.Module):
             spatial_shapes, valid_ratios, device=src.device
         )
         for i, layer in enumerate(self.layers):
-            # print(f"layer {i} start>>>>>>>>>>>>")
+            print(f"layer {i} start>>>>>>>>>>>>")
             output = layer(
-                output,
-                pos,
-                reference_points,
-                spatial_shapes,
-                level_start_index,
-                padding_mask,
+                src=output,
+                pos=pos,
+                reference_points=reference_points,
+                spatial_shapes=spatial_shapes,
+                level_start_index=level_start_index,
+                padding_mask=padding_mask,
             )
-            # print(f"layer {i} end<<<<<<<<<<<<")
         return output
 
 
@@ -348,6 +344,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
 
         self.lateral_convs = nn.ModuleList()
         self.output_convs = nn.ModuleList()
+
         for in_chans in in_channels[::-1]:
             lateral_conv = nn.Sequential(
                 nn.Conv2d(in_chans, embed_dim, kernel_size=1),
@@ -403,7 +400,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         for i, f in enumerate(features[::-1]):
             cur_feat = self.lateral_convs[i](f)
             y = cur_feat + F.interpolate(
-                outs[-1], size=cur_feat.shape[-2:], mode="nearest"
+                outs[-1], size=cur_feat.shape[-2:], mode="bilinear", align_corners=False
             )
             y = self.output_convs[i](y)
             outs.append(y)

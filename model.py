@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from timm.models.vision_transformer_sam import VisionTransformerSAM
+from timm.models.resnet import ResNet as TimmResNet,Bottleneck
 from timm.layers import create_norm_layer
 from msdeform_pixel_decoder import (
     MSDeformAttnPixelDecoder
@@ -59,6 +60,13 @@ class VisionTransformer(VisionTransformerSAM):
     def forward(self, x):
         return super().forward_features(x)
 
+
+class ResNet(TimmResNet):
+    def __init__(self, layers):
+        super().__init__(Bottleneck, layers)
+
+    def forward(self, x):
+        return self.forward_features(x)
 
 class SimpleFPN(nn.Module):
     """Simple Feature Pyramid Network for ViTDet."""

@@ -4,7 +4,6 @@ import cv2
 import torch
 from torch.utils.data import Dataset, DataLoader
 import albumentations as A
-from cocoapi import ChromoConcatCOCO
 
 
 class CoCoDataset(Dataset):
@@ -22,9 +21,7 @@ class CoCoDataset(Dataset):
         imgObj = self.cocoapi.loadImgs(img_id)[0]
         annObjs = self.cocoapi.loadAnns(self.cocoapi.getAnnIds(img_id))
         masks = np.stack([self.cocoapi.annToMask(annObj) for annObj in annObjs], axis=0)
-        labels = np.asarray(
-            [annObj["category_id"] for annObj in annObjs], dtype="int64"
-        )
+        labels = np.asarray([annObj["category_id"] for annObj in annObjs], dtype="int64")
         bboxes = np.asarray([annObj["bbox"] for annObj in annObjs], dtype="float32")
         metainfo = dict(img_id=img_id, img_shape=(imgObj["height"], imgObj["width"]))
         return {
@@ -96,13 +93,13 @@ class TransformPipeline:
         image = torch.as_tensor(results["image"], dtype=torch.float32).permute(2, 0, 1)
         bboxes = torch.as_tensor(results["bboxes"], dtype=torch.float32)
         masks = torch.as_tensor(results["masks"], dtype=torch.float32)
-        labels = torch.as_tensor(results["labels"], dtype=torch.int64)
+        labels = torch.as_tensor(results["labels"], dtype=torch.long)
         return image, dict(
             boxes=bboxes, masks=masks, labels=labels, metainfo=targets["metainfo"]
         )
 
 
-def build_train_dataloader(coco, batch_size=1, is_train=True):
+def build_train_dataloader(coco, batch_size=1):
     dataloader = DataLoader(
         CoCoDataset(
            coco, transforms=TransformPipeline(train_augmentation)
