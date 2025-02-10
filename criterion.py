@@ -312,5 +312,4 @@ class SetCriterion(nn.Module):
         losses.update(self.loss_masks(pred_masks, gt_masks, indices, num_masks))
         losses.update(self.loss_labels(pred_logits, gt_classes,indices, num_masks))
 
-
         return losses

@@ -1,11 +1,8 @@
 import sys
 import logging
 from tqdm import tqdm
-import rlemasklib as rle
 from pycocotools.coco import COCO
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
-import pycocotools.mask as maskutils
-import numpy as np
 import torch
 from model import postprocessing_instance_segmentation
 from dataloader import build_val_dataloader

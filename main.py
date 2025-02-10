@@ -7,6 +7,7 @@ from model import (
     Mask2Former,
     ResNet,
     VisionTransformer,
+    ResNet,
     SimpleFPN,
     MSDeformAttnPixelDecoder,
     TransformerDecoder,
@@ -39,7 +40,20 @@ if __name__ == "__main__":
             #     img_size=1024,
             # ),
             backbone=ResNet((3, 4, 6, 3)),
+            # backbone=VisionTransformer(
+            #     patch_size=16,
+            #     embed_dim=256,
+            #     depth=1,  # 12
+            #     num_heads=4,
+            #     global_attn_indexes=[2, 5, 8, 11],
+            #     window_size=7,
+            #     use_rel_pos=True,
+            #     img_size=1024,
+            # ),
+            backbone=ResNet((3, 4, 6, 3)),
             neck=SimpleFPN(
+                backbone_channel=2048,
+                in_channels=[512, 1024, 2048, 2048],
                 backbone_channel=2048,
                 in_channels=[512, 1024, 2048, 2048],
                 out_channels=256,
@@ -58,18 +72,17 @@ if __name__ == "__main__":
         ChromoConcatCOCO(
             [
             dict(
-                img_root="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/train",
-                ann_file="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/annotations/chromosome_train.json",
+                img_root="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/train",
+                ann_file="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/annotations/chromosome_train.json",
             )
         ]),
         batch_size=2
     )
 
-
     val_coco = ChromoConcatCOCO([
        dict(
-                img_root="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/val",
-                ann_file="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/annotations/chromosome_val.json",
+                img_root="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/val",
+                ann_file="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/annotations/chromosome_val.json",
             ) 
     ])
 
