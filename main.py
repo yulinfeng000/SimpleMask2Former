@@ -9,10 +9,11 @@ from model import (
     SimpleFPN,
     MSDeformAttnPixelDecoder,
     TransformerDecoder,
-    MultiScalePixelDecoder,
 )
-from criterion import SetCriterion, HungarianMatcher
-from dataloader import build_dataloader
+from criterion import SetCriterion
+from matcher import HungarianMatcher
+from dataloader import build_train_dataloader,ChromoConcatCOCO
+from evaluator import coco_evaluate
 
 logger = logging.getLogger(__file__)
 logger.addHandler(logging.StreamHandler(sys.stdout))
@@ -41,21 +42,30 @@ if __name__ == "__main__":
             ),
             pixel_decoder=MSDeformAttnPixelDecoder([256, 256, 256, 256], 256, 256),
             #pixel_decoder=MultiScalePixelDecoder([256, 256, 256, 256], 256, 256),
-            transformer_decoder=TransformerDecoder(256, 256, num_classes=num_classes),
+            transformer_decoder=TransformerDecoder(256, 256, num_classes=num_classes,num_queries=100),
         )
         .cuda()
         .train()
     )
 
-    dataloader = build_dataloader(
-        [
+    train_dataloader = build_train_dataloader(
+        ChromoConcatCOCO(
+            [
             dict(
-                img_root="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/train",
-                ann_file="/shared/data/chromo_coco/cropped_datasets/allcrop-segm-coco/annotations/chromosome_train.json",
+                img_root="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/train",
+                ann_file="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/annotations/chromosome_train.json",
             )
-        ],
+        ]),
         batch_size=2
     )
+
+
+    val_coco = ChromoConcatCOCO([
+       dict(
+                img_root="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/val",
+                ann_file="/shared/data/chromo_coco/cropped_datasets/20241016crop-segm-coco/annotations/chromosome_val.json",
+            ) 
+    ])
 
     criterion = SetCriterion(
         num_classes,
@@ -64,25 +74,27 @@ if __name__ == "__main__":
     ).cuda()
 
     optimizer = AdamW(mask2former.parameters(), lr=1e-5)
-    lr_scheduler = StepLR(optimizer, step_size=100)
+    # lr_scheduler = StepLR(optimizer, step_size=100)
     scaler = torch.amp.GradScaler() 
-    
+    num_steps = len(train_dataloader)
     with torch.autocast('cuda'):
-
-        for i, batch in enumerate(dataloader):
+        for i, batch in enumerate(train_dataloader):
             optimizer.zero_grad()
             images, targets = batch
             images = images.cuda()
             gt_classes = [t["labels"].cuda() for t in targets]
             gt_masks = [t["masks"].cuda() for t in targets]
-
+            metainfos = [t['metainfo'] for t in targets]
             pred_logits, pred_masks = mask2former(images)
-
             loss = criterion(pred_logits, pred_masks, gt_classes, gt_masks)
             total_loss = sum(loss.values())
-            print("loss :",total_loss)
+            logger.info(f"[epoch 0] step:{i}/{num_steps}, loss dice: {loss['loss_dice']}, loss mask:{loss['loss_mask']}, loss cls:{loss['loss_ce']}, total loss:{total_loss}")
             scaler.scale(total_loss).backward()
+            torch.nn.utils.clip_grad_norm_(mask2former.parameters(), 1.0)
+            scaler.unscale_(optimizer)
             scaler.step(optimizer)
             scaler.update()
-            lr_scheduler.step()
-    
+            # lr_scheduler.step()
+
+    eval_results = coco_evaluate(mask2former,val_coco)
+    print(eval_results)

@@ -161,7 +161,7 @@ class MultiScalePixelDecoder(nn.Module):
             transformer encoder position encoding. Defaults to
             dict(type='SinePositionalEncoding', num_feats=128,
             normalize=True).
-        init_cfg (:obj:`ConfigDict` or dict or list[:obj:`ConfigDict` or \
+        init_cfg (:obj:`ConfigDict` or dict or list[:obj:`ConfigDict` or 
             dict], optional): Initialization config dict. Defaults to None.
     """
 
@@ -220,7 +220,7 @@ class MultiScalePixelDecoder(nn.Module):
             tuple[Tensor, Tensor]: a tuple containing the following:
 
                 - mask_feature (Tensor): Shape (batch_size, c, h, w).
-                - memory (Tensor): Output of last stage of backbone.\
+                - memory (Tensor): Output of last stage of backbone.
                         Shape (batch_size, c, h, w).
         """
         # [ 256 , 128 , 64 , 32 ]
@@ -377,6 +377,7 @@ class TransformerDecoder(nn.Module):
         self.num_layers = num_layers
         self.num_queries = num_queries
         self.num_heads = num_heads
+        self.num_classes = num_classes + 1
 
         self.input_projects = nn.ModuleList(
             [
@@ -404,7 +405,7 @@ class TransformerDecoder(nn.Module):
 
         self.level_embed = nn.Embedding(num_layers, embed_dim)
         self.pos_embed = PositionEmbeddingSine(embed_dim // 2, normalize=True)
-        self.cls_embed = nn.Linear(embed_dim, num_classes + 1)
+        self.cls_embed = nn.Linear(embed_dim, self.num_classes)
         self.mask_embed = MLP(embed_dim, embed_dim, out_channels, 3)
         self.norm = nn.LayerNorm(embed_dim)
 
@@ -529,3 +530,56 @@ class Mask2Former(nn.Module):
         x, memories = self.pixel_decoder(mlvl_features)
         pred_logits, pred_masks = self.transformer_decoder(x, memories)
         return pred_logits, pred_masks
+    
+
+
+
+def postprocessing_instance_segmentation(pred_logits, pred_masks, metainfos, threshold=0.5):
+    """
+    Args: 
+        pred_logits: N,num_queries,N_classes
+        pred_masks:  N,num_queries,H,W
+        metainfos:   List[Dict[str,...]]
+    """
+    
+    pred_masks = F.interpolate(pred_masks, size=(384,384),mode="bilinear", align_corners=False)
+    pred_logits = pred_logits.softmax(dim=-1)
+
+    device = pred_logits.device
+    num_classes = pred_logits.shape[-1] - 1
+    num_queries = pred_logits.shape[-2]
+
+    pred_results = []
+
+    for mask_pred,mask_cls,metainfo in zip(pred_masks,pred_logits,metainfos):
+        pred_mask_target_size = metainfo['img_shape']
+        scores = torch.nn.functional.softmax(mask_cls, dim=-1)[:, :-1]
+        labels = torch.arange(num_classes, device=device).unsqueeze(0).repeat(num_queries, 1).flatten(0, 1)
+        scores_per_image, topk_indices = scores.flatten(0, 1).topk(num_queries, sorted=False)
+        labels_per_image = labels[topk_indices]
+
+        topk_indices = torch.div(topk_indices, num_classes, rounding_mode="floor")
+        mask_pred = mask_pred[topk_indices]
+        pred_masks = (mask_pred > 0).float()
+
+        # Calculate average mask prob
+        mask_scores_per_image = (mask_pred.sigmoid().flatten(1) * pred_masks.flatten(1)).sum(1) / (
+            pred_masks.flatten(1).sum(1) + 1e-6
+        )
+        pred_scores = scores_per_image * mask_scores_per_image
+        pred_classes = labels_per_image
+
+        pred_masks = torch.nn.functional.interpolate(
+            pred_masks.unsqueeze(0), size=pred_mask_target_size, mode="nearest"
+        )[0]
+
+
+        masks_results = pred_masks[pred_scores > threshold]
+        labels_results   = pred_classes[pred_scores > threshold]  
+        scores_results = pred_scores[pred_scores > threshold]
+
+        pred_results.append(
+            dict(masks=masks_results, labels=labels_results, scores=scores_results)
+        )
+
+    return pred_results
