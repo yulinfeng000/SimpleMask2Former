@@ -141,7 +141,6 @@ class MSDeformAttnTransformerEncoderLayer(nn.Module):
             input_padding_mask=padding_mask,
         )
         # print("src2 shape", src2.shape)
-        print("after src2 is", src2)
         src = src + self.dropout(src2)
         # print("[MSDeformAttnTransformerEncoderLayer::forward] before norm src is",src)
         src = self.norm(src)
@@ -257,10 +256,9 @@ class MSDeformAttnTransformer(nn.Module):
             num_layers=num_layers,
         )
         self.level_embed = nn.Parameter(torch.Tensor(num_levels, embed_dim))
+        self._init_weight()
 
-        self._reset_parameters()
-
-    def _reset_parameters(self):
+    def _init_weight(self):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
