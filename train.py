@@ -68,13 +68,13 @@ if __name__ == "__main__":
     mask2former.to(device)
 
     train_dataset = build_coco_dataset(
-        img_root="/shared/data/chromo_coco/cropped_datasets/6kv2_dj_mcls/train_v2_6000",
-        ann_file="/shared/data/chromo_coco/cropped_datasets/6kv2_dj_mcls/annotations_category_ordered/train_v2_6000.json",
+        img_root="xxx/train",
+        ann_file="xxx.json",
     )
 
     val_dataset = build_coco_dataset(
-        img_root="/shared/data/chromo_coco/cropped_datasets/6kv2_dj_mcls/val_500",
-        ann_file="/shared/data/chromo_coco/cropped_datasets/6kv2_dj_mcls/annotations_category_ordered/val_500.json",
+        img_root="xxx/val",
+        ann_file="xxx.json",
         is_train=False,
     )
 
