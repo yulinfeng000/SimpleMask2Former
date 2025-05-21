@@ -9,10 +9,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # Modified by Bowen Cheng from https://github.com/fundamentalvision/Deformable-DETR
 
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import division
-
 import warnings
 import math
 

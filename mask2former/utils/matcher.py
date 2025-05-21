@@ -272,13 +272,14 @@ class HungarianMatcher(nn.Module):
             )
 
             # to fix bug: ValueError: cost matrix is infeasible
+                        # to fix bug: ValueError: cost matrix is infeasible
             C = torch.minimum(C, torch.tensor(1e10))
             C = torch.maximum(C, torch.tensor(-1e10))
-            
+            C = torch.nan_to_num(C, nan=1e10, posinf=1e10, neginf=-1e10)
+
             C = C.reshape(num_queries, -1).cpu()
-
             indices.append(linear_sum_assignment(C))    
-
+            
         return [
             (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
             for i, j in indices

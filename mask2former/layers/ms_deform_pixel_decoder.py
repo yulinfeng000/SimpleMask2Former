@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from timm.layers import create_norm_layer, create_act_layer
 from .ms_deform_attn import MSDeformAttn
-from ..utils import PositionEmbeddingSine
+from .position_embedding import PositionEmbeddingSine
 
 
 class MSDeformAttnTransformerEncoderLayer(nn.Module):
@@ -227,7 +227,7 @@ class MSDeformAttnPixelDecoder(nn.Module):
         self,
         in_channels=[256, 256, 256, 256],
         in_strides=[4, 8, 16, 32],
-        transformer_dropout=0.1,
+        transformer_dropout=0.0,
         transformer_nheads=8,
         transformer_dim_feedforward=1024,
         transformer_enc_layers=6,
@@ -236,13 +236,19 @@ class MSDeformAttnPixelDecoder(nn.Module):
         # 前面backbone和neck中提取到多尺度特征需要传入 pixel decoder 中 transformer 模块的索引
         transformer_in_features=[1, 2, 3],
         common_stride=4,
+        norm="groupnorm",
     ):
         super().__init__()
         # transformer_input_shape = {k: v for k, v in input_shape.items() if k in transformer_in_features}
+        
+        #this is total input multiscale feature map's index, original paper use dict[level_name, tensor]
+        # but we implement format is tuple[tensor]
         self.in_features_indexes = range(len(in_channels))
+
         # this is the input shape of pixel decoder
         # self.in_features = [k for k, v in input_shape.items()]  # starting from "res3" to "res5"
         self.feature_channels = in_channels  # [v.channel for k, v in input_shape.items()] # eg. [16, 64, 128, 256]
+
         # this is the input shape of transformer encoder (could use less features than pixel decoder
         self.transformer_in_features = transformer_in_features  # [k for k, v in transformer_input_shape.items()]  # starting from "res3" to "res5"
         transformer_in_channels = [
@@ -260,7 +266,8 @@ class MSDeformAttnPixelDecoder(nn.Module):
                 input_proj_list.append(
                     nn.Sequential(
                         nn.Conv2d(in_channels, conv_dim, kernel_size=1),
-                        nn.GroupNorm(32, conv_dim),
+                        create_norm_layer(norm, conv_dim, num_groups=32),
+                        # nn.GroupNorm(32, conv_dim),
                     )
                 )
             self.input_proj = nn.ModuleList(input_proj_list)
@@ -269,7 +276,8 @@ class MSDeformAttnPixelDecoder(nn.Module):
                 [
                     nn.Sequential(
                         nn.Conv2d(transformer_in_channels[-1], conv_dim, kernel_size=1),
-                        nn.GroupNorm(32, conv_dim),
+                        create_norm_layer(norm, conv_dim, num_groups=32)
+                        # nn.GroupNorm(32, conv_dim),
                     )
                 ]
             )
@@ -308,6 +316,8 @@ class MSDeformAttnPixelDecoder(nn.Module):
         # extra fpn levels
         stride = min(self.transformer_feature_strides)
         self.num_fpn_levels = int(np.log2(stride) - np.log2(self.common_stride))
+        use_bias = norm == ""
+
         lateral_convs = []
         output_convs = []
 
@@ -315,13 +325,13 @@ class MSDeformAttnPixelDecoder(nn.Module):
             self.feature_channels[: self.num_fpn_levels]
         ):  # res2 -> fpn
             lateral_conv = nn.Sequential(
-                nn.Conv2d(in_channels, conv_dim, kernel_size=1),
-                nn.GroupNorm(32, conv_dim),
+                nn.Conv2d(in_channels, conv_dim, kernel_size=1, bias=use_bias),
+                create_norm_layer(norm, conv_dim, num_groups=32),
             )
 
             output_conv = nn.Sequential(
-                nn.Conv2d(conv_dim, conv_dim, kernel_size=3, stride=1, padding=1),
-                nn.GroupNorm(32, conv_dim),
+                nn.Conv2d(conv_dim, conv_dim, kernel_size=3, stride=1, padding=1, bias=use_bias),
+                create_norm_layer(norm, conv_dim, num_groups=32),
                 nn.ReLU(inplace=True),
             )
 

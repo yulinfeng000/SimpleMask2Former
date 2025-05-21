@@ -1,12 +1,11 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # Modified by Bowen Cheng from: https://github.com/facebookresearch/detr/blob/master/models/detr.py
 from typing import Optional
-import math
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
 from timm.layers import create_norm_layer, create_act_layer
-from ..utils import PositionEmbeddingSine
+from .position_embedding import PositionEmbeddingSine
 
 
 class SelfAttentionLayer(nn.Module):
@@ -263,9 +262,9 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         num_queries=100,
         nheads=8,
         dim_feedforward=2048,
+        mask_dim=256,
         dec_layers=9,
         pre_norm=False,
-        mask_dim=256,
         enforce_input_project=False,
     ):
         super().__init__()

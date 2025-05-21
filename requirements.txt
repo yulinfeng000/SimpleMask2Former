@@ -1,0 +1,6 @@
+detectron2
+mmengine
+torchmetrics
+albumentations
+numpy
+pycocotools

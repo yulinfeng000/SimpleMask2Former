@@ -21,19 +21,16 @@ class Mask2Former(nn.Module):
 
 
 @torch.no_grad()
-def postprocessing_instance_segmentation(
-    pred_logits, pred_masks, metainfos, threshold=0.5
-):
+def postprocessing_instance_segmentation(pred_logits, pred_masks, img_sizes):
     """
     Args:
         pred_logits: N,num_queries,N_classes
         pred_masks:  N,num_queries,H,W
-        metainfos:   List[Dict[str,...]]
+        img_sizes:   List[Tuple[int,int]]
     """
     device = pred_logits.device
     num_classes = pred_logits.shape[-1] - 1
     num_queries = pred_logits.shape[-2]
-    img_sizes   = [metafino["img_shape"] for metafino in metainfos]
 
     pred_results = []
 
@@ -42,8 +39,7 @@ def postprocessing_instance_segmentation(
 
         mask_pred = F.interpolate(
             mask_pred.unsqueeze(0),
-            size=(pred_mask_target_size[0], 
-                  pred_mask_target_size[1]),
+            size=(pred_mask_target_size[0], pred_mask_target_size[1]),
             mode="bilinear",
             align_corners=False,
         ).squeeze(0)
@@ -75,9 +71,9 @@ def postprocessing_instance_segmentation(
         pred_scores = scores_per_image * mask_scores_per_image
         pred_classes = labels_per_image
 
-        masks_results = mask_pred[pred_scores > threshold].bool()
-        labels_results = pred_classes[pred_scores > threshold].long()
-        scores_results = pred_scores[pred_scores > threshold].float()
+        masks_results = mask_pred.bool()
+        labels_results = pred_classes.long()
+        scores_results = pred_scores.float()
 
         pred_results.append(
             dict(masks=masks_results, labels=labels_results, scores=scores_results)

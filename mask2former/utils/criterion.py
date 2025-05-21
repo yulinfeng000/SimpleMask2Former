@@ -3,7 +3,6 @@
 """
 MaskFormer criterion.
 """
-import logging
 
 import torch
 import torch.nn.functional as F
@@ -34,7 +33,9 @@ def dice_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float):
     return loss.sum() / num_masks
 
 
-def sigmoid_ce_loss(inputs: torch.Tensor, labels: torch.Tensor, num_masks: int) -> torch.Tensor:
+def sigmoid_ce_loss(
+    inputs: torch.Tensor, labels: torch.Tensor, num_masks: int
+) -> torch.Tensor:
     r"""
     Args:
         inputs (`torch.Tensor`):
@@ -47,7 +48,8 @@ def sigmoid_ce_loss(inputs: torch.Tensor, labels: torch.Tensor, num_masks: int) 
         loss (`torch.Tensor`): The computed loss.
     """
     cross_entropy_loss = F.binary_cross_entropy_with_logits(
-        inputs, labels, reduction="none")
+        inputs, labels, reduction="none"
+    )
     loss = cross_entropy_loss.mean(1).sum() / num_masks
     return loss
 
@@ -75,8 +77,7 @@ def sigmoid_focal_loss(
         Loss tensor
     """
     prob = inputs.sigmoid()
-    ce_loss = F.binary_cross_entropy_with_logits(
-        inputs, targets, reduction="none")
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
     p_t = prob * targets + (1 - prob) * (1 - targets)
     loss = ce_loss * ((1 - p_t) ** gamma)
 
@@ -103,9 +104,20 @@ def calculate_uncertainty(logits):
     gt_class_logits = logits.clone()
     return -(torch.abs(gt_class_logits))
 
+
 class SetCriterion(nn.Module):
-    def __init__(self, num_classes, matcher, weight_dict=dict(loss_dice=5.0, loss_mask=5.0, loss_ce=1.0), eos_coef=0.1, losses=['labels', 'masks'],
-                 num_points=112*112, oversample_ratio=3.0, importance_sample_ratio=0.75):
+    def __init__(
+        self,
+        num_classes,
+        matcher,
+        weight_dict=dict(loss_dice=5.0, loss_mask=5.0, loss_ce=1.0),
+        cls_weights=None,
+        eos_coef=0.1,
+        losses=["labels", "masks"],
+        num_points=112 * 112,
+        oversample_ratio=3.0,
+        importance_sample_ratio=0.75,
+    ):
         """Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -120,7 +132,9 @@ class SetCriterion(nn.Module):
         self.weight_dict = weight_dict
         self.eos_coef = eos_coef
         self.losses = losses
-        empty_weight = torch.ones(self.num_classes + 1)
+
+        assert len(cls_weights) == num_classes + 1, "CLS weights should be of size num_classes + 1"
+        empty_weight = cls_weights if cls_weights is not None else torch.ones(self.num_classes + 1) 
         empty_weight[-1] = self.eos_coef
         self.register_buffer("empty_weight", empty_weight)
 
@@ -137,14 +151,20 @@ class SetCriterion(nn.Module):
         src_logits = outputs["pred_logits"].float()
 
         idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J]
-                                     for t, (_, J) in zip(targets, indices)])
+        target_classes_o = torch.cat(
+            [t["labels"][J] for t, (_, J) in zip(targets, indices)]
+        )
         target_classes = torch.full(
-            src_logits.shape[:2], self.num_classes, dtype=torch.int64, device=src_logits.device
+            src_logits.shape[:2],
+            self.num_classes,
+            dtype=torch.int64,
+            device=src_logits.device,
         )
         target_classes[idx] = target_classes_o
 
-        loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
+        loss_ce = F.cross_entropy(
+            src_logits.transpose(1, 2), target_classes, self.empty_weight
+        )
         losses = {"loss_ce": loss_ce}
         return losses
 
@@ -160,7 +180,8 @@ class SetCriterion(nn.Module):
         src_masks = src_masks[src_idx]
         masks = [t["masks"] for t in targets]
         # TODO use valid to mask invalid areas due to padding in loss
-        target_masks = torch.nested.as_nested_tensor(masks).to_padded_tensor(0)
+        # target_masks = torch.nested.as_nested_tensor(masks).to_padded_tensor(0)
+        target_masks, _ = nested_tensor_from_tensor_list(masks)
         target_masks = target_masks.to(src_masks)
         target_masks = target_masks[tgt_idx]
 
@@ -202,22 +223,24 @@ class SetCriterion(nn.Module):
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
-        batch_idx = torch.cat([torch.full_like(src, i)
-                              for i, (src, _) in enumerate(indices)])
+        batch_idx = torch.cat(
+            [torch.full_like(src, i) for i, (src, _) in enumerate(indices)]
+        )
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
 
     def _get_tgt_permutation_idx(self, indices):
         # permute targets following indices
-        batch_idx = torch.cat([torch.full_like(tgt, i)
-                              for i, (_, tgt) in enumerate(indices)])
+        batch_idx = torch.cat(
+            [torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)]
+        )
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
     def get_loss(self, loss, outputs, targets, indices, num_masks):
         loss_map = {
-            'labels': self.loss_labels,
-            'masks': self.loss_masks,
+            "labels": self.loss_labels,
+            "masks": self.loss_masks,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_masks)
@@ -229,8 +252,7 @@ class SetCriterion(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
-        outputs_without_aux = {k: v for k,
-                               v in outputs.items() if k != "aux_outputs"}
+        outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
 
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets)
@@ -238,8 +260,7 @@ class SetCriterion(nn.Module):
         # Compute the average number of target boxes accross all nodes, for normalization purposes
         num_masks = sum(len(t["labels"]) for t in targets)
         num_masks = torch.as_tensor(
-            [num_masks], dtype=torch.float, device=next(
-                iter(outputs.values())).device
+            [num_masks], dtype=torch.float, device=next(iter(outputs.values())).device
         )
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_masks)
@@ -255,7 +276,9 @@ class SetCriterion(nn.Module):
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
                 indices = self.matcher(aux_outputs, targets)
                 for loss in self.losses:
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_masks)
+                    l_dict = self.get_loss(
+                        loss, aux_outputs, targets, indices, num_masks
+                    )
                     l_dict = {f"{k}_{i}": v for k, v in l_dict.items()}
                     losses.update(l_dict)
 
