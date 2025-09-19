@@ -1,33 +1,35 @@
 import logging
-from datetime import datetime
-import sys
 import os
+import sys
+from datetime import datetime
+
 import torch
+from mmengine.optim import build_optim_wrapper
+from torch.utils.tensorboard import SummaryWriter
+
 from mask2former import (
     Mask2Former,
     MSDeformAttnPixelDecoder,
     MultiScaleMaskedTransformerDecoder,
 )
 from mask2former.backbones.resnet import resnet50
-from mask2former.utils.matcher import HungarianMatcher
 from mask2former.utils.criterion import SetCriterion
+from mask2former.utils.matcher import HungarianMatcher
 from utils.datasets import (
+    build_coco_dataset,
     build_train_dataloader,
     build_val_dataloader,
-    build_coco_dataset,
 )
 from utils.evaluator import coco_evaluate
 from utils.original_ckpt_loader import original_resnet50_ckpt_loader
-from torch.utils.tensorboard import SummaryWriter
-from mmengine.optim import build_optim_wrapper
 
 if __name__ == "__main__":
     amp_enabled = True
-    num_classes = 80 
+    num_classes = 80
     device = "cuda:0"
     start_epoch = 0
     total_epochs = 100
-    base_lr = 1e-4 # 1e-5
+    base_lr = 1e-4  # 1e-5
     batch_size = 4
     output_dir = os.path.join(
         "outputs",
@@ -66,7 +68,7 @@ if __name__ == "__main__":
         mask2former.load_state_dict(
             torch.load(load_from, map_location=device)["model"], strict=True
         )
-    
+
     train_dataset = build_coco_dataset(
         img_root="xxx/train",
         ann_file="xxx/train.json",
@@ -91,7 +93,7 @@ if __name__ == "__main__":
         HungarianMatcher(num_points=112 * 112),
         num_points=112 * 112,
     )
-    
+
     num_steps = len(train_dataloader)
 
     optimizer_wrapper = build_optim_wrapper(
@@ -123,7 +125,7 @@ if __name__ == "__main__":
 
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer_wrapper.optimizer,
-        milestones=[70,90],
+        milestones=[70, 90],
         gamma=0.1,
         last_epoch=-1,
     )
@@ -151,7 +153,9 @@ if __name__ == "__main__":
         mask2former.train()
         for i, batch in enumerate(train_dataloader):
             tb_logger.add_scalar(
-                "lr", optimizer_wrapper.optimizer.param_groups[0]["lr"], epoch * num_steps + i
+                "lr",
+                optimizer_wrapper.optimizer.param_groups[0]["lr"],
+                epoch * num_steps + i,
             )
             images, targets = batch
             images = images.to(device)
@@ -178,7 +182,7 @@ if __name__ == "__main__":
                             f"loss/{k}", losses[k].item(), epoch * num_steps + i
                         )
 
-                    elif "ce" in k:
+                    elif "_ce" in k:
                         losses[k] *= criterion.weight_dict["loss_ce"]
                         tb_logger.add_scalar(
                             f"loss/{k}", losses[k].item(), epoch * num_steps + i
