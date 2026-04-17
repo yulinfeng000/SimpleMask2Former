@@ -17,6 +17,25 @@
 
 ## Usage｜使用方法
 
+### 1. 编译 MultiScaleDeformableAttention CUDA 算子
+
+需要 CUDA 环境和 PyTorch（已安装 CUDA 支持）。
+
+```bash
+cd mask2former/ops
+python setup.py build install
+```
+
+编译完成后可运行测试验证：
+
+```bash
+python test.py
+```
+
+> 注意：如果不编译 CUDA 算子，推理时会自动回退到 PyTorch 纯实现（较慢），但训练必须使用编译后的 CUDA 版本。
+
+### 2. 训练
+
 1. 下载 [Mask2Former-ResNet50](https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/panoptic/maskformer2_R50_bs16_50ep/model_final_94dc52.pkl) 权重到根目录
 
 2. 修改train.py中COCO格式数据集的对应路径
